@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "reachy_dj"
+version = "0.1.0"
+description = "Describe a song, Reachy generates it with AI and dances to it"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+
+dependencies = [
+    # Reachy
+    "reachy-mini",
+    "reachy-mini-dances-library",
+    # Audio
+    "openai-whisper",          # local STT, no cloud
+    "pydub",                   # MP3 decode (needs ffmpeg on system)
+    "soundfile",               # WAV read for waiting beat
+    "scipy",                   # resampling
+    "numpy",
+    # UI
+    "gradio>=4.0",             # web UI fallback
+    # Utils
+    "python-dotenv",
+    "requests",
+]
+
+[project.optional-dependencies]
+# Phase 2: swap in this instead of udioapi.pro
+musicgen = [
+    "audiocraft",              # Meta's MusicGen (Apache 2.0)
+]
+# Nicer LLM dance selection
+openai = [
+    "openai>=1.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["reachy_dj*"]

@@ -1,0 +1,156 @@
+"""
+Reachy DJ - AI Music Generator + Dancer
+========================================
+Tell Reachy what kind of song you want. It generates it with AI,
+plays it through its speaker, and dances — with moves chosen to
+match the vibe of your prompt.
+
+Flow:
+  1. Voice command (mic) OR typed prompt (web UI)
+  2. Reachy says "let me cook" + plays a waiting beat + does idle animation
+  3. Music generates in background (udioapi.pro → MP3 bytes)
+  4. LLM picks dance moves based on the prompt
+  5. Music streams to speaker + dance runs concurrently
+  6. Song ends → Reachy takes a bow
+"""
+
+import threading
+import logging
+import time
+
+from reachy_mini import ReachyMini, ReachyMiniApp
+
+from .music_generator import MusicGeneratorBase, UdioApiGenerator
+from .dance_selector import pick_dances_for_prompt
+from .audio_player import stream_mp3_to_reachy
+from .voice_listener import listen_for_command
+from .waiting_behavior import WaitingBehavior
+
+logger = logging.getLogger(__name__)
+
+
+class ReachyDJ(ReachyMiniApp):
+    """
+    Reachy DJ — describe a song, Reachy generates it and dances to it.
+
+    Inputs:
+      - Voice: say your prompt out loud (Whisper STT)
+      - Web UI: type it at http://localhost:7860 (Gradio)
+
+    Environment variables (in .env):
+      UDIO_API_KEY=your_key_here
+      OPENAI_API_KEY=your_key_here   (used only for dance selection — cheap)
+    """
+
+    # Gradio web UI spun up by the Reachy app framework
+    custom_app_url: str | None = "http://localhost:7860"
+
+    def run(self, reachy_mini: ReachyMini, stop_event: threading.Event):
+        generator = UdioApiGenerator()
+        waiter = WaitingBehavior(reachy_mini)
+
+        reachy_mini.speaker.say("DJ Reachy online. Tell me what to make!")
+        logger.info("Reachy DJ started.")
+
+        while not stop_event.is_set():
+            # ── 1. Get prompt (voice or web UI) ──────────────────────────────
+            prompt = _get_prompt(reachy_mini, stop_event)
+            if prompt is None:
+                continue  # timeout or stop signal
+
+            logger.info(f"Prompt received: '{prompt}'")
+            reachy_mini.speaker.say("On it. Give me a moment to cook.")
+
+            # ── 2. Kick off music generation + waiting behavior in parallel ──
+            mp3_result: dict = {"data": None, "error": None}
+            gen_done = threading.Event()
+
+            def generate():
+                try:
+                    mp3_result["data"] = generator.generate(prompt)
+                except Exception as e:
+                    mp3_result["error"] = str(e)
+                finally:
+                    gen_done.set()
+
+            gen_thread = threading.Thread(target=generate, daemon=True)
+            gen_thread.start()
+
+            # Robot does its "thinking" routine while music generates
+            waiter.start(gen_done)  # loops until gen_done is set
+
+            # ── 3. Handle result ──────────────────────────────────────────────
+            if mp3_result["error"] or mp3_result["data"] is None:
+                logger.error(f"Generation failed: {mp3_result['error']}")
+                reachy_mini.speaker.say("Sorry, I couldn't generate that. Try again?")
+                continue
+
+            mp3_bytes = mp3_result["data"]
+            reachy_mini.speaker.say("Here we go!")
+            time.sleep(0.8)  # brief pause before drop
+
+            # ── 4. LLM picks dances for this prompt ──────────────────────────
+            dance_moves = pick_dances_for_prompt(prompt)
+            logger.info(f"Selected dances: {dance_moves}")
+
+            # ── 5. Stream audio + dance simultaneously ────────────────────────
+            dance_stop = threading.Event()
+            dance_thread = threading.Thread(
+                target=_dance_loop,
+                args=(reachy_mini, dance_moves, dance_stop),
+                daemon=True,
+            )
+            dance_thread.start()
+
+            # stream_mp3_to_reachy blocks until the song finishes
+            stream_mp3_to_reachy(reachy_mini, mp3_bytes)
+
+            # ── 6. Song over ──────────────────────────────────────────────────
+            dance_stop.set()
+            dance_thread.join(timeout=3)
+            _take_a_bow(reachy_mini)
+
+            # Loop back — ready for next prompt
+            reachy_mini.speaker.say("What else should I make?")
+
+        logger.info("Reachy DJ stopped.")
+
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+def _get_prompt(reachy_mini: ReachyMini, stop_event: threading.Event) -> str | None:
+    """
+    Try voice first (10s window). If silence, return None and let the
+    web UI handle it via the shared prompt queue (see web_ui.py).
+    """
+    logger.debug("Listening for voice prompt...")
+    text = listen_for_command(reachy_mini, timeout_seconds=10)
+    if stop_event.is_set():
+        return None
+    return text  # may be None if silence — caller loops
+
+
+def _dance_loop(reachy_mini: ReachyMini, dance_moves: list[str], stop_event: threading.Event):
+    """
+    Cycles through the LLM-selected dance moves until stop_event is set.
+    """
+    from reachy_mini_dances_library import DancesPlayer
+    player = DancesPlayer(reachy_mini)
+    idx = 0
+    while not stop_event.is_set():
+        move = dance_moves[idx % len(dance_moves)]
+        logger.debug(f"Dancing: {move}")
+        try:
+            player.play(move)
+        except Exception as e:
+            logger.warning(f"Dance move '{move}' failed: {e}")
+            time.sleep(0.3)
+        idx += 1
+
+
+def _take_a_bow(reachy_mini: ReachyMini):
+    """Quick bow animation to punctuate the end of the song."""
+    from reachy_mini.utils import create_head_pose
+    reachy_mini.goto_target(head=create_head_pose(z=-15, mm=True), duration=0.6)
+    time.sleep(0.7)
+    reachy_mini.goto_target(head=create_head_pose(), duration=0.5)
