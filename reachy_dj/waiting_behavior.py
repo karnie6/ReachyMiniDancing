@@ -23,7 +23,7 @@ from reachy_mini.utils import create_head_pose
 
 logger = logging.getLogger(__name__)
 
-WAITING_BEAT_PATH = Path(__file__).parent / "loading.wav"
+WAITING_BEAT_PATH = Path(__file__).parent.parent / "loading.wav"
 
 
 class WaitingBehavior:
