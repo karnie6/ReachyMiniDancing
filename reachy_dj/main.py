@@ -14,6 +14,7 @@ Flow:
   6. Song ends → Reachy takes a bow
 """
 
+import queue
 import threading
 import logging
 import time
@@ -25,6 +26,7 @@ from .dance_selector import pick_dances_for_prompt
 from .audio_player import stream_mp3_to_reachy
 from .voice_listener import listen_for_command
 from .waiting_behavior import WaitingBehavior
+from .web_ui import launch_web_ui
 
 logger = logging.getLogger(__name__)
 
@@ -49,12 +51,21 @@ class ReachyDJ(ReachyMiniApp):
         generator = UdioApiGenerator()
         waiter = WaitingBehavior(reachy_mini)
 
+        # Shared queue for typed prompts from the web UI
+        prompt_queue: queue.Queue[str] = queue.Queue()
+        web_ui_thread = threading.Thread(
+            target=launch_web_ui,
+            args=(prompt_queue, stop_event),
+            daemon=True,
+        )
+        web_ui_thread.start()
+
         reachy_mini.speaker.say("DJ Reachy online. Tell me what to make!")
         logger.info("Reachy DJ started.")
 
         while not stop_event.is_set():
             # ── 1. Get prompt (voice or web UI) ──────────────────────────────
-            prompt = _get_prompt(reachy_mini, stop_event)
+            prompt = _get_prompt(reachy_mini, stop_event, prompt_queue)
             if prompt is None:
                 continue  # timeout or stop signal
 
@@ -118,16 +129,35 @@ class ReachyDJ(ReachyMiniApp):
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _get_prompt(reachy_mini: ReachyMini, stop_event: threading.Event) -> str | None:
+def _get_prompt(
+    reachy_mini: ReachyMini,
+    stop_event: threading.Event,
+    prompt_queue: queue.Queue,
+) -> str | None:
     """
-    Try voice first (10s window). If silence, return None and let the
-    web UI handle it via the shared prompt queue (see web_ui.py).
+    Check the web UI queue first (instant), then listen for voice (up to 10s),
+    then check the queue once more in case something arrived while we listened.
+    Returns None if nothing received — caller will loop.
     """
+    # Check queue immediately — typed prompt may already be waiting
+    try:
+        return prompt_queue.get_nowait()
+    except queue.Empty:
+        pass
+
     logger.debug("Listening for voice prompt...")
     text = listen_for_command(reachy_mini, timeout_seconds=10)
     if stop_event.is_set():
         return None
-    return text  # may be None if silence — caller loops
+
+    if text:
+        return text
+
+    # One more queue check — user may have typed while we were listening
+    try:
+        return prompt_queue.get_nowait()
+    except queue.Empty:
+        return None
 
 
 def _dance_loop(reachy_mini: ReachyMini, dance_moves: list[str], stop_event: threading.Event):
