@@ -15,7 +15,6 @@ The motion makes it look intentional, like a DJ cueing up a track.
 import threading
 import time
 import logging
-import os
 import numpy as np
 from pathlib import Path
 
@@ -24,8 +23,7 @@ from reachy_mini.utils import create_head_pose
 
 logger = logging.getLogger(__name__)
 
-ASSETS_DIR = Path(__file__).parent.parent / "assets"
-WAITING_BEAT_PATH = ASSETS_DIR / "waiting_beat.wav"
+WAITING_BEAT_PATH = Path(__file__).parent / "loading.wav"
 
 
 class WaitingBehavior:
@@ -60,15 +58,13 @@ class WaitingBehavior:
 
     def _play_beat_loop(self, stop_event: threading.Event) -> None:
         """
-        Loops the waiting_beat.wav through Reachy's speaker until stopped.
+        Loops loading.wav through Reachy's speaker until stopped.
+        Pushes audio in 100ms chunks with matching sleeps so we don't
+        flood the buffer and can stop cleanly mid-file.
         If the WAV file doesn't exist, falls back to silence (no crash).
         """
         if not WAITING_BEAT_PATH.exists():
-            logger.warning(
-                f"Waiting beat not found at {WAITING_BEAT_PATH}. "
-                "Add a short drum loop WAV to assets/waiting_beat.wav"
-            )
-            # Fallback: just wait silently
+            logger.warning(f"Waiting beat not found at {WAITING_BEAT_PATH}.")
             stop_event.wait()
             return
 
@@ -78,11 +74,17 @@ class WaitingBehavior:
             if audio.ndim == 2:
                 audio = audio.mean(axis=1)  # to mono
 
+            chunk_size = int(sample_rate * 0.1)  # 100ms chunks
             logger.debug("Playing waiting beat loop...")
+
             while not stop_event.is_set():
-                self.robot.media.push_audio_sample(audio, sample_rate)
-                # Small pause between loop iterations so we can check stop_event
-                time.sleep(0.05)
+                # Stream the full file in chunks, stopping early if signalled
+                pos = 0
+                while pos < len(audio) and not stop_event.is_set():
+                    chunk = audio[pos : pos + chunk_size]
+                    self.robot.media.push_audio_sample(chunk, sample_rate)
+                    pos += chunk_size
+                    time.sleep(0.1)  # match chunk duration for real-time pacing
 
         except Exception as e:
             logger.warning(f"Beat loop error: {e}")

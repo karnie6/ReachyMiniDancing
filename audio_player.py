@@ -16,6 +16,7 @@ Reachy Mini's speaker expects:
 """
 
 import logging
+import time
 import numpy as np
 
 from reachy_mini import ReachyMini
@@ -54,9 +55,12 @@ def stream_mp3_to_reachy(reachy_mini: ReachyMini, mp3_bytes: bytes) -> None:
         chunk = audio[pushed : pushed + chunk_size]
         reachy_mini.media.push_audio_sample(chunk, sample_rate)
         pushed += len(chunk)
+        # Sleep per chunk so this call blocks for the actual song duration
+        # (push_audio_sample is non-blocking — without this we'd dump the
+        # entire song into the buffer instantly and return immediately)
+        time.sleep(CHUNK_DURATION_SEC)
 
     # Wait for the last chunk to finish playing
-    import time
     time.sleep(CHUNK_DURATION_SEC * 2)
     logger.info("Audio stream complete.")
 

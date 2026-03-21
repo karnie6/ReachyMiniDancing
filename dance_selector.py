@@ -23,7 +23,7 @@ from dotenv import load_dotenv
 load_dotenv()
 logger = logging.getLogger(__name__)
 
-# All 20 available moves from reachy_mini_dances_library
+# All 19 available moves from reachy_mini_dances_library
 ALL_MOVES = [
     "simple_nod",
     "head_tilt_roll",
