@@ -10,9 +10,9 @@ Why chunked streaming vs loading all at once:
   - Avoids loading a full 2-minute song into memory before starting
 
 Reachy Mini's speaker expects:
-  - Sample rate: 44100 Hz (resampled here if needed)
+  - Sample rate: queried from mini.media.get_output_audio_samplerate()
   - Format: float32, mono
-  - Delivered via: mini.media.push_audio_sample(chunk, sample_rate)
+  - Delivered via: mini.media.push_audio_sample(chunk)  # one arg only
 """
 
 import logging
@@ -23,8 +23,8 @@ from reachy_mini import ReachyMini
 
 logger = logging.getLogger(__name__)
 
-TARGET_SAMPLE_RATE = 44100
 CHUNK_DURATION_SEC = 0.1   # push 100ms chunks — smooth without hammering the API
+VOLUME_SCALE = 0.3         # scale down to 30% volume
 
 
 def stream_mp3_to_reachy(reachy_mini: ReachyMini, mp3_bytes: bytes) -> None:
@@ -32,36 +32,32 @@ def stream_mp3_to_reachy(reachy_mini: ReachyMini, mp3_bytes: bytes) -> None:
     Decode mp3_bytes and stream to Reachy's speaker in small chunks.
     Blocks until the full audio has been pushed (song is done).
     """
-    # Decode MP3 → numpy float32 PCM
     audio, sample_rate = _decode_mp3(mp3_bytes)
 
-    # Resample to 44100 if needed
-    if sample_rate != TARGET_SAMPLE_RATE:
-        audio = _resample(audio, sample_rate, TARGET_SAMPLE_RATE)
-        sample_rate = TARGET_SAMPLE_RATE
+    reachy_mini.media.start_playing()
+    target_rate = reachy_mini.media.get_output_audio_samplerate()
 
-    # Ensure mono
+    if sample_rate != target_rate:
+        audio = _resample(audio, sample_rate, target_rate)
+
     if audio.ndim == 2:
         audio = audio.mean(axis=1)
 
-    # Push in chunks
-    chunk_size = int(sample_rate * CHUNK_DURATION_SEC)
-    total_samples = len(audio)
+    # Volume control — scale down to 30%
+    audio = audio * VOLUME_SCALE
+
+    chunk_size = int(target_rate * CHUNK_DURATION_SEC)
     pushed = 0
 
-    logger.info(f"Streaming {total_samples / sample_rate:.1f}s of audio to Reachy...")
+    logger.info(f"Streaming {len(audio) / target_rate:.1f}s of audio to Reachy...")
 
-    while pushed < total_samples:
+    while pushed < len(audio):
         chunk = audio[pushed : pushed + chunk_size]
-        reachy_mini.media.push_audio_sample(chunk, sample_rate)
-        pushed += len(chunk)
-        # Sleep per chunk so this call blocks for the actual song duration
-        # (push_audio_sample is non-blocking — without this we'd dump the
-        # entire song into the buffer instantly and return immediately)
+        reachy_mini.media.push_audio_sample(chunk)  # ONE arg only, no sample_rate
         time.sleep(CHUNK_DURATION_SEC)
+        pushed += len(chunk)
 
-    # Wait for the last chunk to finish playing
-    time.sleep(CHUNK_DURATION_SEC * 2)
+    reachy_mini.media.stop_playing()
     logger.info("Audio stream complete.")
 
 
