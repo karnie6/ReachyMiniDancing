@@ -16,6 +16,7 @@ Reachy Mini's speaker expects:
 """
 
 import logging
+import threading
 import time
 import numpy as np
 
@@ -27,10 +28,14 @@ CHUNK_DURATION_SEC = 0.1   # push 100ms chunks — smooth without hammering the 
 VOLUME_SCALE = 0.3         # scale down to 30% volume
 
 
-def stream_mp3_to_reachy(reachy_mini: ReachyMini, mp3_bytes: bytes) -> None:
+def stream_mp3_to_reachy(
+    reachy_mini: ReachyMini,
+    mp3_bytes: bytes,
+    stop_event: threading.Event | None = None,
+) -> None:
     """
     Decode mp3_bytes and stream to Reachy's speaker in small chunks.
-    Blocks until the full audio has been pushed (song is done).
+    Blocks until the full audio has been pushed or stop_event is set.
     """
     audio, sample_rate = _decode_mp3(mp3_bytes)
 
@@ -52,6 +57,9 @@ def stream_mp3_to_reachy(reachy_mini: ReachyMini, mp3_bytes: bytes) -> None:
     logger.info(f"Streaming {len(audio) / target_rate:.1f}s of audio to Reachy...")
 
     while pushed < len(audio):
+        if stop_event is not None and stop_event.is_set():
+            logger.info("Audio stream interrupted by stop_event.")
+            break
         chunk = audio[pushed : pushed + chunk_size]
         reachy_mini.media.push_audio_sample(chunk)  # ONE arg only, no sample_rate
         time.sleep(CHUNK_DURATION_SEC)

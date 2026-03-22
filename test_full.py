@@ -31,7 +31,8 @@ logger = logging.getLogger("test_full")
 
 MP3_PATH = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("test_song.wav")
 PROMPT   = sys.argv[2] if len(sys.argv) > 2 else "upbeat funky groovy"
-NUM_MOVES = 3  # how many dance moves to pick
+NUM_MOVES = 3   # how many dance moves to pick
+MAX_SECONDS = 60  # hard cutoff for both audio and dance
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -56,19 +57,26 @@ def main():
     mini = ReachyMini()
     logger.info("Connected.")
 
-    # ── Launch dance thread ───────────────────────────────────────────────────
-    dance_stop = threading.Event()
+    # ── Shared stop event — set by timeout OR when audio finishes ────────────
+    stop_event = threading.Event()
+    timer = threading.Timer(MAX_SECONDS, lambda: (
+        logger.info(f"60s timeout reached — cutting off."),
+        stop_event.set(),
+    ))
+    timer.daemon = True
+    timer.start()
 
+    # ── Launch dance thread ───────────────────────────────────────────────────
     def dance_loop():
         from reachy_mini_dances_library import DanceMove
         dt = 0.05  # 20 Hz
         idx = 0
-        while not dance_stop.is_set():
+        while not stop_event.is_set():
             name = dance_moves[idx % len(dance_moves)]
             try:
                 move = DanceMove(name)
                 t = 0.0
-                while t < move.duration and not dance_stop.is_set():
+                while t < move.duration and not stop_event.is_set():
                     head_pose, antennas, _ = move.evaluate(t)
                     mini.set_target(head=head_pose, antennas=antennas)
                     time.sleep(dt)
@@ -80,16 +88,17 @@ def main():
 
     dance_thread = threading.Thread(target=dance_loop, daemon=True)
     dance_thread.start()
-    logger.info("Dance loop started.")
+    logger.info(f"Dance loop started (max {MAX_SECONDS}s).")
 
-    # ── Stream audio (blocks until song finishes) ─────────────────────────────
+    # ── Stream audio (blocks until song finishes or stop_event is set) ────────
     from reachy_dj.audio_player import stream_mp3_to_reachy
     logger.info("Streaming audio — robot should now dance and play music...")
-    stream_mp3_to_reachy(mini, mp3_bytes)
+    stream_mp3_to_reachy(mini, mp3_bytes, stop_event=stop_event)
 
     # ── Cleanup ───────────────────────────────────────────────────────────────
+    timer.cancel()  # no-op if already fired
+    stop_event.set()  # stop dance if audio finished before timeout
     logger.info("Audio done — stopping dance.")
-    dance_stop.set()
     dance_thread.join(timeout=3)
 
     # Quick bow
