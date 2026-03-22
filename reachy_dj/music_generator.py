@@ -142,10 +142,14 @@ class MusicGenGenerator(MusicGeneratorBase):
     """
 
     def __init__(self, model_size: str = "small", duration: int = 30):
-        from audiocraft.models import MusicGen
-        logger.info(f"Loading MusicGen-{model_size} (this may take a moment on first run)...")
-        self.model = MusicGen.get_pretrained(f"facebook/musicgen-{model_size}")
-        self.model.set_generation_params(duration=duration)
+        from transformers import AutoProcessor, MusicgenForConditionalGeneration
+        logger.info(f"Loading MusicGen-{model_size} (first run downloads ~300MB)...")
+        model_id = f"facebook/musicgen-{model_size}"
+        self.processor = AutoProcessor.from_pretrained(model_id)
+        self.model = MusicgenForConditionalGeneration.from_pretrained(model_id)
+        self.sample_rate = self.model.config.audio_encoder.sampling_rate  # 32000
+        # tokens ≈ duration * 50 (MusicGen generates ~50 tokens/sec)
+        self.max_new_tokens = duration * 50
         logger.info("MusicGen ready.")
 
     def generate(self, prompt: str) -> bytes:
@@ -153,15 +157,14 @@ class MusicGenGenerator(MusicGeneratorBase):
         import soundfile as sf
 
         logger.info(f"Generating with MusicGen: '{prompt}'")
-        wav = self.model.generate([prompt])  # tensor [batch, channels, samples]
+        inputs = self.processor(text=[prompt], padding=True, return_tensors="pt")
+        audio_values = self.model.generate(**inputs, max_new_tokens=self.max_new_tokens)
 
-        wav_np = wav[0].cpu().numpy()        # [channels, samples]
-        if wav_np.ndim == 2:
-            wav_np = wav_np.T                # [samples, channels] for soundfile
-        sample_rate = self.model.sample_rate
+        # audio_values shape: [batch, channels, samples] → take first, squeeze to [samples]
+        wav_np = audio_values[0, 0].cpu().numpy()
 
         buf = io.BytesIO()
-        sf.write(buf, wav_np, sample_rate, format="WAV")
+        sf.write(buf, wav_np, self.sample_rate, format="WAV")
         buf.seek(0)
         logger.info("MusicGen generation complete.")
         return buf.read()
