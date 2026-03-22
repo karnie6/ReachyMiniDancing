@@ -25,7 +25,7 @@ from reachy_mini import ReachyMini
 logger = logging.getLogger(__name__)
 
 CHUNK_DURATION_SEC = 0.1   # push 100ms chunks — smooth without hammering the API
-VOLUME_SCALE = 0.3         # scale down to 30% volume
+VOLUME_SCALE = 0.5         # scale to 50% volume
 
 
 def stream_mp3_to_reachy(

@@ -32,7 +32,7 @@ logger = logging.getLogger("test_full")
 MP3_PATH = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("test_song.wav")
 PROMPT   = sys.argv[2] if len(sys.argv) > 2 else "upbeat funky groovy"
 NUM_MOVES = 3   # how many dance moves to pick
-MAX_SECONDS = 60  # hard cutoff for both audio and dance
+MAX_SECONDS = 120  # hard cutoff for both audio and dance
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
