@@ -1,7 +1,8 @@
 """
-test_full.py — End-to-end audio + dance test (no music generation needed)
-=========================================================================
-Uses a local MP3 file so you can test the full pipeline without an API key.
+test_generate.py — Full pipeline test: generate → play → dance
+===============================================================
+Takes a text prompt, generates a song with MusicGen, plays it,
+and dances. No pre-existing audio file needed.
 
 Usage:
   # 1. Make sure the Reachy daemon is running:
@@ -9,47 +10,41 @@ Usage:
 
   # 2. Activate venv and run:
   #    source .venv/bin/activate
-  #    python test_full.py /path/to/your/song.mp3
-
-  # Optional: pass a genre hint as second arg for dance selection
-  #    python test_full.py song.mp3 "upbeat funky groovy"
+  #    python test_generate.py "upbeat funky groovy"
 """
 
 import sys
 import threading
 import logging
 import time
-from pathlib import Path
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(name)s — %(message)s",
 )
-logger = logging.getLogger("test_full")
+logger = logging.getLogger("test_generate")
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-MP3_PATH = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("test_song.wav")
-PROMPT   = sys.argv[2] if len(sys.argv) > 2 else "upbeat funky groovy"
-NUM_MOVES = 3   # how many dance moves to pick
+PROMPT     = sys.argv[1] if len(sys.argv) > 1 else "upbeat funky groovy"
+NUM_MOVES  = 3    # how many dance moves to cycle through
 MAX_SECONDS = 120  # hard cutoff for both audio and dance
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
-    if not MP3_PATH.exists():
-        print(f"ERROR: MP3 file not found: {MP3_PATH}")
-        print("Pass the path to an audio file (MP3, WAV, etc.) as first arg.")
-        sys.exit(1)
+    # ── Generate music ────────────────────────────────────────────────────────
+    from reachy_dj.music_generator import MusicGenGenerator
+    generator = MusicGenGenerator()
+    logger.info(f"Generating song for prompt: '{PROMPT}'")
+    audio_bytes = generator.generate(PROMPT)
+    logger.info(f"Generation done ({len(audio_bytes) // 1024} KB)")
 
-    logger.info(f"Loading MP3: {MP3_PATH} ({MP3_PATH.stat().st_size // 1024} KB)")
-    mp3_bytes = MP3_PATH.read_bytes()
-
-    # ── Dance selection (keyword fallback — no API key needed) ────────────────
+    # ── Dance selection ───────────────────────────────────────────────────────
     from reachy_dj.dance_selector import pick_dances_for_prompt
     dance_moves = pick_dances_for_prompt(PROMPT)[:NUM_MOVES]
-    logger.info(f"Selected {len(dance_moves)} moves for prompt '{PROMPT}': {dance_moves}")
+    logger.info(f"Selected moves: {dance_moves}")
 
     # ── Connect to Reachy ─────────────────────────────────────────────────────
     from reachy_mini import ReachyMini
@@ -60,7 +55,7 @@ def main():
     # ── Shared stop event — set by timeout OR when audio finishes ────────────
     stop_event = threading.Event()
     timer = threading.Timer(MAX_SECONDS, lambda: (
-        logger.info(f"60s timeout reached — cutting off."),
+        logger.info("120s timeout reached — cutting off."),
         stop_event.set(),
     ))
     timer.daemon = True
@@ -90,14 +85,14 @@ def main():
     dance_thread.start()
     logger.info(f"Dance loop started (max {MAX_SECONDS}s).")
 
-    # ── Stream audio (blocks until song finishes or stop_event is set) ────────
+    # ── Stream audio (blocks until done or stop_event set) ───────────────────
     from reachy_dj.audio_player import stream_mp3_to_reachy
     logger.info("Streaming audio — robot should now dance and play music...")
-    stream_mp3_to_reachy(mini, mp3_bytes, stop_event=stop_event)
+    stream_mp3_to_reachy(mini, audio_bytes, stop_event=stop_event)
 
     # ── Cleanup ───────────────────────────────────────────────────────────────
-    timer.cancel()  # no-op if already fired
-    stop_event.set()  # stop dance if audio finished before timeout
+    timer.cancel()
+    stop_event.set()
     logger.info("Audio done — stopping dance.")
     dance_thread.join(timeout=3)
 

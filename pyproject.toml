@@ -25,13 +25,11 @@ dependencies = [
     # Utils
     "python-dotenv",
     "requests",
+    "transformers>=4.31",      # MusicGen via HuggingFace (no spacy/heavy deps)
+    "torch",                   # MusicGen inference backend
 ]
 
 [project.optional-dependencies]
-# Phase 2: swap in this instead of udioapi.pro
-musicgen = [
-    "audiocraft",              # Meta's MusicGen (Apache 2.0)
-]
 # Nicer LLM dance selection
 openai = [
     "openai>=1.0",

@@ -129,62 +129,42 @@ class MusicGenGenerator(MusicGeneratorBase):
     """
     Local music generation using Meta's MusicGen model.
     Fully open source (Apache 2.0), no API keys, no cloud dependency.
-    Publishable to HF app store without any restrictions.
 
-    Install:
-        pip install audiocraft   # Meta's library
-        # or: pip install transformers accelerate
+    Install:  pip install audiocraft
 
     Hardware:
-        - Mac (MPS): ~15-30s for a 10s clip  ← recommended
         - Linux (CUDA GPU): ~5-15s
-        - CPU only: ~2-4 min (painful but works)
-        - RPi 5 (Reachy Wireless): too slow, run on laptop instead
+        - Mac (MPS): ~15-30s for a 30s clip
+        - CPU only: ~2-4 min (works, just slow)
 
-    Quality:
-        - Instrumental: excellent, especially for clear genre prompts
-        - Vocals: not supported (MusicGen is instrumental only)
-        - For a dance app, this is actually perfect
-
-    TODO: uncomment and test once you're ready for Phase 2
+    model_size options: "small" (300M), "medium" (1.5B), "large" (3.3B)
+    "small" is the sweet spot for speed vs quality on a laptop.
     """
 
-    def __init__(self, model_size: str = "small"):
-        # model_size options: "small" (300M), "medium" (1.5B), "large" (3.3B)
-        # "small" is the sweet spot for speed vs quality on a laptop
-        raise NotImplementedError(
-            "MusicGenGenerator is Phase 2 — not yet implemented.\n"
-            "When ready:\n"
-            "  1. pip install audiocraft\n"
-            "  2. Uncomment the implementation below\n"
-            "  3. In main.py, swap UdioApiGenerator() for MusicGenGenerator()"
-        )
-
-    # ── Uncomment for Phase 2 ────────────────────────────────────────────
-    # def __init__(self, model_size: str = "small"):
-    #     from audiocraft.models import MusicGen
-    #     import torch
-    #     logger.info(f"Loading MusicGen-{model_size}...")
-    #     self.model = MusicGen.get_pretrained(f"facebook/musicgen-{model_size}")
-    #     self.model.set_generation_params(duration=30)  # 30 second songs
-    #     logger.info("MusicGen ready.")
-    #
-    # def generate(self, prompt: str) -> bytes:
-    #     import torch, io
-    #     from audiocraft.data.audio import audio_write
-    #     import soundfile as sf
-    #
-    #     logger.info(f"Generating with MusicGen: '{prompt}'")
-    #     wav = self.model.generate([prompt])  # returns tensor [1, channels, samples]
-    #
-    #     # Convert tensor → MP3 bytes in memory
-    #     wav_np = wav[0].cpu().numpy().T  # shape: [samples, channels]
-    #     sample_rate = self.model.sample_rate
-    #
-    #     buf = io.BytesIO()
-    #     sf.write(buf, wav_np, sample_rate, format="mp3")
-    #     buf.seek(0)
-    #     return buf.read()
+    def __init__(self, model_size: str = "small", duration: int = 30):
+        from transformers import AutoProcessor, MusicgenForConditionalGeneration
+        logger.info(f"Loading MusicGen-{model_size} (first run downloads ~300MB)...")
+        model_id = f"facebook/musicgen-{model_size}"
+        self.processor = AutoProcessor.from_pretrained(model_id)
+        self.model = MusicgenForConditionalGeneration.from_pretrained(model_id)
+        self.sample_rate = self.model.config.audio_encoder.sampling_rate  # 32000
+        # tokens ≈ duration * 50 (MusicGen generates ~50 tokens/sec)
+        self.max_new_tokens = duration * 50
+        logger.info("MusicGen ready.")
 
     def generate(self, prompt: str) -> bytes:
-        raise NotImplementedError("See comment above")
+        import io
+        import soundfile as sf
+
+        logger.info(f"Generating with MusicGen: '{prompt}'")
+        inputs = self.processor(text=[prompt], padding=True, return_tensors="pt")
+        audio_values = self.model.generate(**inputs, max_new_tokens=self.max_new_tokens)
+
+        # audio_values shape: [batch, channels, samples] → take first, squeeze to [samples]
+        wav_np = audio_values[0, 0].cpu().numpy()
+
+        buf = io.BytesIO()
+        sf.write(buf, wav_np, self.sample_rate, format="WAV")
+        buf.seek(0)
+        logger.info("MusicGen generation complete.")
+        return buf.read()
