@@ -35,12 +35,12 @@ MAX_SECONDS = 120  # hard cutoff for both audio and dance
 
 def main():
     # ── Load model + connect to Reachy first ──────────────────────────────────
-    from reachy_dj.music_generator import MusicGenGenerator
+    from reachy_dj.music_generator import create_generator
     from reachy_dj.dance_selector import pick_dances_for_prompt
     from reachy_mini import ReachyMini
     from reachy_dj.waiting_behavior import WaitingBehavior
 
-    generator = MusicGenGenerator()
+    generator = create_generator()
 
     dance_moves = pick_dances_for_prompt(PROMPT)[:NUM_MOVES]
     logger.info(f"Selected moves: {dance_moves}")

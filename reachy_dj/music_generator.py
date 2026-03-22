@@ -18,6 +18,19 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 
+def create_generator(duration: int = 30) -> "MusicGeneratorBase":
+    """
+    Auto-selects the best available generator based on env vars:
+      - HF_API_TOKEN set → HuggingFaceInferenceGenerator (remote, recommended)
+      - fallback         → MusicGenGenerator (local, requires large download)
+    """
+    if os.getenv("HF_API_TOKEN"):
+        logger.info("HF_API_TOKEN found — using HuggingFace Inference API.")
+        return HuggingFaceInferenceGenerator(duration=duration)
+    logger.info("No HF_API_TOKEN — falling back to local MusicGen.")
+    return MusicGenGenerator(duration=duration)
+
+
 class MusicGeneratorBase(ABC):
     @abstractmethod
     def generate(self, prompt: str) -> bytes:
@@ -123,7 +136,72 @@ class UdioApiGenerator(MusicGeneratorBase):
         raise RuntimeError(f"Generation timed out after {self.MAX_WAIT}s")
 
 
-# ── Phase 2: Local MusicGen (Meta, fully open source) ────────────────────────
+# ── Phase 2a: HuggingFace Inference API (remote, no local model) ─────────────
+
+class HuggingFaceInferenceGenerator(MusicGeneratorBase):
+    """
+    Remote MusicGen via HuggingFace Inference API.
+    No local model download — inference runs on HF's servers.
+
+    Setup:
+      1. Get a token at huggingface.co/settings/tokens (free account works)
+      2. Add to .env:  HF_API_TOKEN=hf_your_token_here
+
+    Tiers:
+      - Free: rate-limited, model may be cold (adds ~20s on first call)
+      - PRO ($9/mo) or Serverless: faster, higher limits
+
+    The API returns WAV bytes directly — no conversion needed.
+    On cold start (503 + estimated_time), retries automatically.
+    """
+
+    API_URL = "https://api-inference.huggingface.co/models/facebook/musicgen-small"
+    MAX_RETRIES = 10
+    RETRY_BACKOFF = 5  # seconds between retries while model warms up
+
+    def __init__(self, duration: int = 30):
+        self.token = os.getenv("HF_API_TOKEN")
+        if not self.token:
+            raise EnvironmentError(
+                "HF_API_TOKEN not set. Add it to your .env file.\n"
+                "Get a free token at https://huggingface.co/settings/tokens"
+            )
+        self.duration = duration
+        # MusicGen generates ~50 tokens/sec of audio at 32kHz
+        self.max_new_tokens = duration * 50
+
+    def generate(self, prompt: str) -> bytes:
+        headers = {"Authorization": f"Bearer {self.token}"}
+        payload = {
+            "inputs": prompt,
+            "parameters": {"max_new_tokens": self.max_new_tokens},
+        }
+
+        logger.info(f"Requesting MusicGen via HF Inference API: '{prompt}'")
+
+        for attempt in range(self.MAX_RETRIES):
+            response = requests.post(self.API_URL, headers=headers, json=payload, timeout=120)
+
+            if response.status_code == 200:
+                logger.info("HF Inference API generation complete.")
+                return response.content  # raw WAV bytes
+
+            if response.status_code == 503:
+                # Model is loading (cold start) — HF returns estimated wait time
+                try:
+                    wait = response.json().get("estimated_time", self.RETRY_BACKOFF)
+                except Exception:
+                    wait = self.RETRY_BACKOFF
+                logger.info(f"Model warming up, retrying in {wait:.0f}s... (attempt {attempt + 1}/{self.MAX_RETRIES})")
+                time.sleep(wait)
+                continue
+
+            response.raise_for_status()
+
+        raise RuntimeError(f"HF Inference API failed after {self.MAX_RETRIES} retries")
+
+
+# ── Phase 2b: Local MusicGen (Meta, fully open source) ───────────────────────
 
 class MusicGenGenerator(MusicGeneratorBase):
     """
