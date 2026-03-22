@@ -71,7 +71,7 @@ def _decode_mp3(mp3_bytes: bytes) -> tuple[np.ndarray, int]:
         from pydub import AudioSegment
         import io
 
-        seg = AudioSegment.from_mp3(io.BytesIO(mp3_bytes))
+        seg = AudioSegment.from_file(io.BytesIO(mp3_bytes))
         samples = np.array(seg.get_array_of_samples(), dtype=np.float32)
 
         # Normalize to [-1.0, 1.0]

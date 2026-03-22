@@ -29,7 +29,7 @@ logger = logging.getLogger("test_full")
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-MP3_PATH = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("test_song.mp3")
+MP3_PATH = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("test_song.wav")
 PROMPT   = sys.argv[2] if len(sys.argv) > 2 else "upbeat funky groovy"
 NUM_MOVES = 3  # how many dance moves to pick
 
@@ -39,7 +39,7 @@ NUM_MOVES = 3  # how many dance moves to pick
 def main():
     if not MP3_PATH.exists():
         print(f"ERROR: MP3 file not found: {MP3_PATH}")
-        print("Download a song from Suno/Udio, then pass its path as first arg.")
+        print("Pass the path to an audio file (MP3, WAV, etc.) as first arg.")
         sys.exit(1)
 
     logger.info(f"Loading MP3: {MP3_PATH} ({MP3_PATH.stat().st_size // 1024} KB)")
