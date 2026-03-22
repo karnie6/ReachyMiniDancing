@@ -34,23 +34,43 @@ MAX_SECONDS = 120  # hard cutoff for both audio and dance
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
-    # ── Generate music ────────────────────────────────────────────────────────
+    # ── Load model + connect to Reachy first ──────────────────────────────────
     from reachy_dj.music_generator import MusicGenGenerator
-    generator = MusicGenGenerator()
-    logger.info(f"Generating song for prompt: '{PROMPT}'")
-    audio_bytes = generator.generate(PROMPT)
-    logger.info(f"Generation done ({len(audio_bytes) // 1024} KB)")
-
-    # ── Dance selection ───────────────────────────────────────────────────────
     from reachy_dj.dance_selector import pick_dances_for_prompt
+    from reachy_mini import ReachyMini
+    from reachy_dj.waiting_behavior import WaitingBehavior
+
+    generator = MusicGenGenerator()
+
     dance_moves = pick_dances_for_prompt(PROMPT)[:NUM_MOVES]
     logger.info(f"Selected moves: {dance_moves}")
 
-    # ── Connect to Reachy ─────────────────────────────────────────────────────
-    from reachy_mini import ReachyMini
     logger.info("Connecting to Reachy Mini...")
     mini = ReachyMini()
     logger.info("Connected.")
+
+    # ── Generate music while playing loading beat + waiting motion ────────────
+    gen_done = threading.Event()
+    audio_result = {}
+
+    def generate():
+        try:
+            logger.info(f"Generating song for prompt: '{PROMPT}'")
+            audio_result["data"] = generator.generate(PROMPT)
+            logger.info(f"Generation done ({len(audio_result['data']) // 1024} KB)")
+        except Exception as e:
+            audio_result["error"] = str(e)
+        finally:
+            gen_done.set()
+
+    gen_thread = threading.Thread(target=generate, daemon=True)
+    gen_thread.start()
+
+    WaitingBehavior(mini).start(gen_done)  # blocks until gen_done is set
+
+    if "error" in audio_result:
+        raise RuntimeError(f"Generation failed: {audio_result['error']}")
+    audio_bytes = audio_result["data"]
 
     # ── Shared stop event — set by timeout OR when audio finishes ────────────
     stop_event = threading.Event()
