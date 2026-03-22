@@ -163,17 +163,25 @@ def _get_prompt(
 def _dance_loop(reachy_mini: ReachyMini, dance_moves: list[str], stop_event: threading.Event):
     """
     Cycles through the LLM-selected dance moves until stop_event is set.
+    Uses DanceMove.evaluate() at 20Hz so stop_event is checked every tick.
     """
-    from reachy_mini_dances_library import DancesPlayer
-    player = DancesPlayer(reachy_mini)
+    from reachy_mini_dances_library import DanceMove
+
+    dt = 0.05  # 20 Hz
     idx = 0
     while not stop_event.is_set():
-        move = dance_moves[idx % len(dance_moves)]
-        logger.debug(f"Dancing: {move}")
+        name = dance_moves[idx % len(dance_moves)]
+        logger.debug(f"Dancing: {name}")
         try:
-            player.play(move)
+            move = DanceMove(name)
+            t = 0.0
+            while t < move.duration and not stop_event.is_set():
+                head_pose, antennas, _ = move.evaluate(t)
+                reachy_mini.set_target(head=head_pose, antennas=antennas)
+                time.sleep(dt)
+                t += dt
         except Exception as e:
-            logger.warning(f"Dance move '{move}' failed: {e}")
+            logger.warning(f"Dance move '{name}' failed: {e}")
             time.sleep(0.3)
         idx += 1
 
