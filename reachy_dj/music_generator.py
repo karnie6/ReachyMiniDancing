@@ -21,13 +21,17 @@ logger = logging.getLogger(__name__)
 def create_generator(duration: int = 30) -> "MusicGeneratorBase":
     """
     Auto-selects the best available generator based on env vars:
-      - HF_API_TOKEN set → HuggingFaceInferenceGenerator (remote, recommended)
-      - fallback         → MusicGenGenerator (local, requires large download)
+      - SUNO_API_KEY set  → SunoGenerator       (best quality)
+      - HF_API_TOKEN set  → HuggingFaceInferenceGenerator (no local model)
+      - fallback          → MusicGenGenerator   (local, requires large download)
     """
+    if os.getenv("SUNO_API_KEY"):
+        logger.info("SUNO_API_KEY found — using Suno via sunoapi.org.")
+        return SunoGenerator(duration=duration)
     if os.getenv("HF_API_TOKEN"):
         logger.info("HF_API_TOKEN found — using HuggingFace Inference API.")
         return HuggingFaceInferenceGenerator(duration=duration)
-    logger.info("No HF_API_TOKEN — falling back to local MusicGen.")
+    logger.info("No API keys found — falling back to local MusicGen.")
     return MusicGenGenerator(duration=duration)
 
 
@@ -134,6 +138,94 @@ class UdioApiGenerator(MusicGeneratorBase):
             logger.debug(f"Still generating... ({elapsed}s)")
 
         raise RuntimeError(f"Generation timed out after {self.MAX_WAIT}s")
+
+
+# ── Phase 1b: Suno via sunoapi.org (best quality, third-party wrapper) ────────
+
+class SunoGenerator(MusicGeneratorBase):
+    """
+    High-quality music generation via Suno (sunoapi.org third-party wrapper).
+    Suno doesn't have an official public API yet — sunoapi.org is the
+    most stable third-party provider, same pattern as udioapi.pro.
+
+    Setup:
+      1. Sign up at sunoapi.org
+      2. Add to .env:  SUNO_API_KEY=your_key_here
+
+    Generates instrumental tracks (no AI vocals) — ideal for dancing.
+    Suno typically returns two clip variants; we use the first one.
+    """
+
+    BASE_URL = "https://api.sunoapi.org/api/v1"
+    POLL_INTERVAL = 5
+    MAX_WAIT = 300  # Suno can take up to ~2 min
+
+    def __init__(self, duration: int = 30):
+        self.api_key = os.getenv("SUNO_API_KEY")
+        if not self.api_key:
+            raise EnvironmentError("SUNO_API_KEY not set. Add it to your .env file.")
+        self.duration = duration
+
+    def generate(self, prompt: str) -> bytes:
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+
+        logger.info(f"Requesting Suno generation: '{prompt}'")
+        response = requests.post(
+            f"{self.BASE_URL}/generate",
+            headers=headers,
+            json={
+                "prompt": prompt,
+                "customMode": False,
+                "instrumental": True,   # no vocals — cleaner for dancing
+                "model": "V4_5ALL",
+            },
+            timeout=30,
+        )
+        response.raise_for_status()
+        data = response.json()
+
+        task_id = data.get("data", {}).get("taskId")
+        if not task_id:
+            raise RuntimeError(f"No taskId in response: {data}")
+        logger.info(f"Suno task submitted: {task_id}")
+
+        # ── Poll until done ───────────────────────────────────────────────
+        elapsed = 0
+        while elapsed < self.MAX_WAIT:
+            time.sleep(self.POLL_INTERVAL)
+            elapsed += self.POLL_INTERVAL
+
+            status_resp = requests.get(
+                f"{self.BASE_URL}/generate/record-info",
+                headers=headers,
+                params={"taskId": task_id},
+                timeout=15,
+            )
+            status_resp.raise_for_status()
+            status_data = status_resp.json()
+
+            state = status_data.get("data", {}).get("status", "").upper()
+            logger.debug(f"Suno task {task_id}: {state} ({elapsed}s)")
+
+            if state == "SUCCESS":
+                clips = status_data.get("data", {}).get("response", {}).get("data", [])
+                if not clips:
+                    raise RuntimeError(f"No clips in completed response: {status_data}")
+                audio_url = clips[0].get("audio_url")
+                if not audio_url:
+                    raise RuntimeError(f"No audio_url in clip: {clips[0]}")
+                logger.info(f"Downloading Suno audio from {audio_url}")
+                audio_resp = requests.get(audio_url, timeout=60)
+                audio_resp.raise_for_status()
+                return audio_resp.content  # MP3 bytes
+
+            if state == "FAILED":
+                raise RuntimeError(f"Suno generation failed: {status_data}")
+
+        raise RuntimeError(f"Suno generation timed out after {self.MAX_WAIT}s")
 
 
 # ── Phase 2a: HuggingFace Inference API (remote, no local model) ─────────────
