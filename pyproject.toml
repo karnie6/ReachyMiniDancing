@@ -25,13 +25,10 @@ dependencies = [
     # Utils
     "python-dotenv",
     "requests",
+    "audiocraft",              # Meta's MusicGen — local open-source generation (Apache 2.0)
 ]
 
 [project.optional-dependencies]
-# Phase 2: swap in this instead of udioapi.pro
-musicgen = [
-    "audiocraft",              # Meta's MusicGen (Apache 2.0)
-]
 # Nicer LLM dance selection
 openai = [
     "openai>=1.0",

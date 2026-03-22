@@ -21,7 +21,7 @@ import time
 
 from reachy_mini import ReachyMini, ReachyMiniApp
 
-from .music_generator import MusicGeneratorBase, UdioApiGenerator
+from .music_generator import MusicGeneratorBase, MusicGenGenerator
 from .dance_selector import pick_dances_for_prompt
 from .audio_player import stream_mp3_to_reachy
 from .voice_listener import listen_for_command
@@ -48,7 +48,7 @@ class ReachyDJ(ReachyMiniApp):
     custom_app_url: str | None = "http://localhost:7860"
 
     def run(self, reachy_mini: ReachyMini, stop_event: threading.Event):
-        generator = UdioApiGenerator()
+        generator = MusicGenGenerator()
         waiter = WaitingBehavior(reachy_mini)
 
         # Shared queue for typed prompts from the web UI
